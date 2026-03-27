@@ -1,0 +1,331 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+% Code listing style
+\lstdefinestyle{codestyle}{
+    backgroundcolor=\color{gray!10},
+    basicstyle=\ttfamily\scriptsize,
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!70!black},
+    showstringspaces=false,
+    tabsize=2
+}
+\lstset{style=codestyle}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{ToolShare: A Serverless Cloud-Based Community Tool Lending Library Application on AWS}
+
+\author{\IEEEauthorblockN{Vishvaksen}
+\IEEEauthorblockA{Student ID: x00000000 \\
+MSc in Cloud Computing \\
+National College of Ireland, Dublin \\
+vishvaksen@student.ncirl.ie}}
+
+\maketitle
+
+% ============================================================
+% ABSTRACT
+% ============================================================
+\begin{abstract}
+This paper presents the design, implementation, and deployment of ToolShare, a serverless cloud-based community tool lending library application hosted on Amazon Web Services. The application enables community members to share physical tools through a structured borrowing and returning system, with features including tool catalogue management across multiple categories, borrower limit enforcement, automated due date tracking, late fee calculation, and overdue item monitoring. The system leverages six AWS services programmatically, namely AWS Lambda for serverless compute, Amazon DynamoDB for NoSQL data storage, Amazon API Gateway for RESTful endpoint routing, Amazon S3 for image storage and static website hosting, Amazon Simple Notification Service for borrowing and overdue notifications, and AWS Identity and Access Management for fine-grained access control. A custom object-oriented Python library called toollibrary-nci was developed and published to the Python Package Index, providing loan management, tool inventory operations, lending record formatting, and input validation utilities with 43 automated tests. The application implements a tool status workflow supporting transitions between ready, loaned, returned, and under\_repair states, with business rules enforcing a maximum of three concurrent borrows per user and automatic late fee computation based on overdue days. A CI/CD pipeline implemented through GitHub Actions automates testing, infrastructure provisioning, and deployment. The results demonstrate that serverless cloud architectures can effectively support community resource-sharing applications with robust inventory management and business rule enforcement.
+\end{abstract}
+
+% ============================================================
+% INTRODUCTION
+% ============================================================
+\section{Introduction}
+
+Community tool libraries have emerged as a sustainable alternative to individual tool ownership, enabling neighbours to share infrequently used equipment such as power drills, garden tools, and ladders rather than each household purchasing items that spend the majority of their lifespan in storage \cite{cloudpatterns}. While the concept of tool lending has existed in physical library formats since the 1970s, the management of these collections has traditionally relied on manual sign-out sheets, spreadsheets, or locally installed database applications that limit accessibility and lack automated tracking capabilities.
+
+The motivation for this project arises from the operational challenges faced by community tool libraries in managing their inventory, tracking borrower compliance, and enforcing lending policies consistently. Without automated systems, common issues include tools being borrowed beyond their due dates with no mechanism for overdue detection, individual borrowers accumulating excessive numbers of tools simultaneously, and inconsistent record-keeping that leads to tools being marked as available when they are actually on loan or under repair. Cloud computing offers a compelling solution by providing globally accessible web interfaces backed by scalable, managed services that eliminate infrastructure management burden for volunteer-run community organisations \cite{serverless}.
+
+The primary objectives of this project are threefold. First, to design and implement a serverless tool lending management system with complete CRUD operations for tool inventory management across six defined categories including power tools, hand tools, garden equipment, ladders, cleaning supplies, and kitchen items. Second, to implement a borrowing and returning workflow with business rule enforcement including a maximum borrower limit of three concurrent tools, automatic due date assignment, late fee calculation based on overdue duration, and overdue tracking with notification capabilities. Third, to develop a reusable Python library that encapsulates tool lending domain logic including loan management, input validation, and formatting utilities. The application employs six AWS services programmatically and demonstrates cloud-native architectural patterns including serverless compute, NoSQL data modelling, and continuous deployment.
+
+% ============================================================
+% PROJECT SPECIFICATION AND REQUIREMENTS
+% ============================================================
+\section{Project Specification and Requirements}
+
+\subsection{Functional Requirements}
+
+The application satisfies the following functional requirements. First, the authentication subsystem provides user registration and login functionality, enabling community members to create accounts and authenticate before accessing the tool lending features. Authentication tokens are issued upon successful login and required for all subsequent API interactions.
+
+Second, the tool management subsystem provides complete CRUD operations for the tool inventory. Administrators can add new tools to the catalogue with attributes including tool name, description, category (power\_tools, hand\_tools, garden, ladders, cleaning, or kitchen), condition rating, and an optional photograph uploaded to Amazon S3. Tools can be updated with revised information, browsed with category-based filtering, and removed from the catalogue when they are no longer serviceable.
+
+Third, the borrowing subsystem enables authenticated users to borrow available tools from the catalogue. When a borrow request is processed, the system validates that the tool is currently in ``ready'' status, verifies that the borrower has not exceeded the maximum limit of three concurrent borrows, assigns a due date based on a configurable lending period, updates the tool status to ``loaned'', and records the loan transaction with the borrower's identity, borrow date, and expected return date. Amazon SNS notifications are sent to confirm successful borrows.
+
+Fourth, the return subsystem processes tool returns by updating the tool status back to ``ready'', recording the actual return date, and calculating any applicable late fees if the tool was returned after the due date. The late fee computation applies a configurable daily rate multiplied by the number of days overdue.
+
+Fifth, the overdue tracking subsystem provides a dashboard view that identifies all currently overdue loans by comparing due dates against the current date, calculates accumulated late fees for each overdue item, and triggers SNS notifications to borrowers with overdue items. The tool status workflow also supports a maintenance path where tools can transition from ``ready'' to ``under\_repair'' and back to ``ready'' when repairs are completed.
+
+\subsection{Non-Functional Requirements}
+
+The non-functional requirements address scalability, availability, cost efficiency, and usability. The serverless architecture provides automatic scaling through AWS Lambda, accommodating usage variations without manual capacity planning \cite{awslambda}. Availability is ensured through the managed nature of all AWS services within the deployment region, each providing built-in redundancy. Cost efficiency is critical for community organisations with limited budgets, and the pay-per-use pricing model of Lambda, DynamoDB on-demand billing, and S3 storage ensures that costs remain proportional to actual usage rather than provisioned capacity. The user interface is designed to be accessible and intuitive for community members of varying technical proficiency, with clear status indicators and straightforward borrowing workflows.
+
+% ============================================================
+% ARCHITECTURE AND DESIGN
+% ============================================================
+\section{Architecture and Design}
+
+ToolShare follows a serverless architecture pattern comprising three distinct tiers: a static frontend hosted on Amazon S3, a serverless API layer powered by AWS Lambda and Amazon API Gateway, and a data persistence layer using Amazon DynamoDB and Amazon S3 \cite{cloudpatterns}. This architecture was selected for its elimination of server management overhead, minimal operational costs suitable for community organisations, and automatic scaling capabilities.
+
+The frontend is a single-page React application built with Vite and styled using Tailwind CSS. The compiled static assets are deployed to an S3 bucket configured for static website hosting, providing direct HTTP access without requiring a dedicated web server. The React application communicates with the backend through RESTful API calls routed through Amazon API Gateway.
+
+The API layer consists of a single AWS Lambda function that processes all incoming HTTP requests through API Gateway's proxy integration. The Lambda function implements internal routing that dispatches requests to appropriate handlers for tool management, borrowing operations, return processing, and user authentication. The function integrates with DynamoDB for data persistence, S3 for tool image storage, and SNS for borrowing and overdue notifications.
+
+The data layer uses Amazon DynamoDB with two primary tables: a tools table keyed by toolId storing tool metadata and current status, and a loans table keyed by loanId with a Global Secondary Index on borrowerId enabling efficient retrieval of all active loans for a specific user. This index is essential for enforcing the borrower limit constraint, as each borrow request must query the borrower's current active loans before approval. DynamoDB was selected over relational alternatives because the tool and loan data models are self-contained without complex inter-entity relationships requiring joins, and the key-value access patterns align efficiently with DynamoDB's query capabilities \cite{awsdynamodb}.
+
+% ============================================================
+% LIBRARY DESCRIPTION
+% ============================================================
+\section{Tool Library}
+
+The toollibrary-nci library is a custom Python package developed specifically for this project to encapsulate the domain logic of community tool lending operations. The library follows object-oriented design principles with four primary classes, requiring no external dependencies beyond the Python standard library. The library is published on the Python Package Index at \url{https://pypi.org/project/toollibrary-nci/1.0.0/} and can be installed via \texttt{pip install toollibrary-nci}.
+
+The library provides the following primary components. The \texttt{LoanManager} class handles the core lending business logic including borrower limit validation, due date calculation, late fee computation based on configurable daily rates, overdue detection by comparing due dates against the current date, and loan status tracking through the lifecycle of each borrowing transaction. The class enforces the maximum borrower limit of three concurrent tools and raises descriptive exceptions when the limit would be exceeded.
+
+The \texttt{ToolManager} class provides tool inventory operations including category validation against the six permitted categories, tool status transition enforcement ensuring only valid state changes occur (ready to loaned, loaned to returned, returned to ready, ready to under\_repair, under\_repair to ready), condition tracking, and availability checking across the entire inventory.
+
+The \texttt{LendingFormatter} class supports multiple output formats for loan records and tool listings including plain text summaries, JSON strings for API responses, and formatted overdue reports with accumulated fee calculations. The \texttt{InputValidator} class provides comprehensive input validation including tool name and description length checks, category verification, date format validation, and sanitisation of user-provided text to prevent injection attacks.
+
+The following code snippet demonstrates how the library's loan management is used within the application to process borrow requests with limit enforcement:
+
+\begin{lstlisting}[language=Python, caption={LoanManager usage for borrow request processing}]
+from toollibrary import LoanManager
+
+loan_mgr = LoanManager(max_borrows=3, daily_fee=1.50)
+
+# Check borrower eligibility
+active_loans = [
+    {"tool_id": "t1", "status": "active"},
+    {"tool_id": "t2", "status": "active"},
+]
+can_borrow = loan_mgr.check_borrower_limit(active_loans)
+# Returns: True (2 active, limit is 3)
+
+# Calculate due date (14-day lending period)
+due_date = loan_mgr.calculate_due_date(
+    borrow_date="2025-03-01", lending_days=14)
+# Returns: "2025-03-15"
+
+# Calculate late fee for overdue return
+fee = loan_mgr.calculate_late_fee(
+    due_date="2025-03-15",
+    return_date="2025-03-20")
+# Returns: 7.50 (5 days * 1.50/day)
+\end{lstlisting}
+
+The library includes 43 unit tests implemented with pytest, covering all four classes comprehensively. The test suite validates borrower limit enforcement at boundary conditions, late fee calculations including zero-day and multi-week overdue scenarios, tool status transition validity for all permitted and prohibited state changes, category validation against the complete set, and formatter output correctness for overdue reports. The library is installed as a dependency in the Lambda deployment package and its test suite is executed as a mandatory CI/CD gate.
+
+% ============================================================
+% CLOUD SERVICES
+% ============================================================
+\section{Cloud-Based Services}
+
+The application integrates six AWS services, each serving a distinct purpose within the serverless architecture. This section provides a critical analysis and justification for each service selection.
+
+\subsection{AWS Lambda}
+
+AWS Lambda provides the serverless compute environment for the backend API, executing the Python 3.11 handler function in response to API Gateway events \cite{awslambda}. Lambda was selected over alternatives such as EC2 or Elastic Beanstalk because a community tool library experiences highly variable traffic patterns with brief peaks during evenings and weekends when members browse and borrow tools, and minimal activity during working hours. Lambda's pay-per-request pricing ensures the community organisation incurs no costs during idle periods, which is essential for budget-constrained non-profit operations. The function is configured with 256 MB of memory and a 30-second timeout, sufficient for all tool management and loan processing operations.
+
+\subsection{Amazon DynamoDB}
+
+Amazon DynamoDB provides a fully managed NoSQL database for storing tool inventory and loan transaction data \cite{awsdynamodb}. The on-demand billing mode eliminates the need to estimate and provision read and write capacity units, which would be particularly challenging for a community application with unpredictable usage patterns. DynamoDB was preferred over Amazon RDS for several reasons: the tool and loan data models are self-contained entities that do not require complex relational joins, the Global Secondary Index on borrowerId enables efficient borrower limit checks without schema modifications, and the single-digit millisecond response times ensure responsive user interactions when browsing the tool catalogue.
+
+\subsection{Amazon API Gateway}
+
+Amazon API Gateway provides the HTTP endpoint layer that routes incoming requests to the Lambda function using proxy integration \cite{awsapigateway}. The REST API uses a catch-all \texttt{\{proxy+\}} resource that delegates routing decisions to the Lambda function. API Gateway was selected for its native Lambda integration, automatic HTTPS termination, and built-in throttling that prevents any individual user from overwhelming the system during peak usage periods. The gateway also handles CORS configuration to permit cross-origin requests from the S3-hosted frontend.
+
+\subsection{Amazon S3}
+
+Amazon S3 serves a dual purpose: storing tool photographs uploaded during catalogue creation and hosting the compiled React frontend as a static website \cite{awss3}. The image bucket stores photographs of available tools to help borrowers identify items before visiting the physical tool library location. Images are stored with content type headers that enable direct browser rendering, and the Lambda function generates the S3 object key using the tool identifier to maintain a clear mapping between tool records and their associated images. The frontend bucket is configured with public access and static website hosting.
+
+\subsection{Amazon SNS}
+
+Amazon Simple Notification Service provides the notification infrastructure for borrowing confirmations and overdue alerts \cite{awssns}. An SNS topic serves as the notification channel, with members subscribing via their email address during registration. When a tool is successfully borrowed, the system publishes a confirmation message with the tool name, due date, and return instructions. The overdue tracking system periodically checks for loans past their due date and publishes reminder notifications to affected borrowers, including the accumulated late fee amount. SNS was preferred over SES because it supports the topic-based subscription model that simplifies community-wide announcements alongside individual notifications.
+
+\begin{lstlisting}[language=Python, caption={SNS notification for borrow confirmation and overdue alert}]
+def notify_borrow(tool_name, borrower, due_date):
+    sns.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Subject=f"ToolShare: Borrow Confirmed",
+        Message=(
+            f"Tool Borrowed Successfully!\n\n"
+            f"Tool: {tool_name}\n"
+            f"Borrower: {borrower}\n"
+            f"Due Date: {due_date}\n"
+            f"Please return on time to avoid fees."
+        )
+    )
+
+def notify_overdue(tool_name, borrower, days, fee):
+    sns.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Subject=f"ToolShare: Overdue Notice",
+        Message=(
+            f"OVERDUE: {tool_name}\n"
+            f"Days overdue: {days}\n"
+            f"Accumulated fee: ${fee:.2f}\n"
+            f"Please return as soon as possible."
+        )
+    )
+\end{lstlisting}
+
+\subsection{AWS IAM}
+
+AWS Identity and Access Management provides the security foundation for the serverless architecture by defining the Lambda function's execution role and associated permission policies \cite{awsiam}. The IAM role grants precisely scoped permissions to read and write to the DynamoDB tools and loans tables, put and get objects in the S3 image bucket, publish messages to the SNS topic, and write logs to CloudWatch Logs. The principle of least privilege is followed by restricting each permission statement to specific resource ARNs. IAM is the foundational service enabling all other AWS integrations, as the Lambda function cannot interact with any service without an appropriately configured execution role.
+
+% ============================================================
+% IMPLEMENTATION
+% ============================================================
+\section{Implementation}
+
+The implementation follows a clean separation between the frontend React application, the serverless Lambda backend, and the custom toollibrary-nci library. This section documents the implementation of each major component.
+
+\subsection{Backend API and CRUD Operations}
+
+The Lambda function implements the complete tool lending API through a path-based routing mechanism. All operations involving tool status changes or loan creation invoke the toollibrary-nci library for business rule validation before persisting changes to DynamoDB. Table~\ref{tab:endpoints} summarises the primary API endpoints.
+
+\begin{table}[H]
+\centering
+\caption{ToolShare REST API Endpoints}
+\label{tab:endpoints}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Method} & \textbf{Endpoint} & \textbf{Description} \\
+\hline
+POST & /auth/register & Register new member \\
+POST & /auth/login & Login, return token \\
+\hline
+GET & /tools & List all tools \\
+POST & /tools & Add tool to catalogue \\
+GET & /tools/\{id\} & Get tool details \\
+PUT & /tools/\{id\} & Update tool info \\
+DELETE & /tools/\{id\} & Remove tool \\
+\hline
+POST & /tools/\{id\}/borrow & Borrow a tool \\
+POST & /tools/\{id\}/return & Return a tool \\
+PUT & /tools/\{id\}/repair & Set under repair \\
+\hline
+GET & /loans & User's active loans \\
+GET & /loans/overdue & List overdue loans \\
+GET & /dashboard & Dashboard summary \\
+\hline
+\end{tabular}
+\end{table}
+
+A critical implementation detail involved the tool status workflow and borrower limit enforcement. The borrow endpoint must atomically verify the tool's current status, check the borrower's active loan count, create the loan record, and update the tool status. The toollibrary-nci library validates the business rules while DynamoDB conditional writes ensure consistency:
+
+\begin{lstlisting}[language=Python, caption={Borrow request processing with limit enforcement}]
+from toollibrary import LoanManager, ToolManager
+
+def handle_borrow(tool_id, user_id):
+    tool_mgr = ToolManager()
+    loan_mgr = LoanManager(max_borrows=3, daily_fee=1.50)
+
+    tool = tools_table.get_item(Key={"toolId": tool_id})
+    if not tool_mgr.validate_transition(
+            tool["status"], "loaned"):
+        return error_response("Tool not available")
+
+    active = get_active_loans(user_id)
+    if not loan_mgr.check_borrower_limit(active):
+        return error_response(
+            "Borrower limit of 3 reached")
+
+    due = loan_mgr.calculate_due_date(
+        str(date.today()), lending_days=14)
+    # Create loan and update tool status
+    create_loan(tool_id, user_id, due)
+    update_tool_status(tool_id, "loaned")
+    notify_borrow(tool["name"], user_id, due)
+    return success_response("Tool borrowed")
+\end{lstlisting}
+
+\subsection{Frontend Implementation}
+
+The frontend is implemented as a single-page React application with Vite and Tailwind CSS. The application features a tool catalogue grid with category filtering tabs for the six tool categories, colour-coded status badges indicating tool availability, a borrowing interface with confirmation dialogs and due date display, a personal loans dashboard showing active borrows with countdown indicators for approaching due dates, and an overdue section highlighting items requiring immediate return with accumulated fee amounts.
+
+The tool catalogue supports both grid and list view modes, with each tool card displaying the tool name, category badge, condition rating, availability status, and photograph if available. The borrow button is conditionally rendered only for tools in ``ready'' status and is disabled with a tooltip message when the user has reached their three-tool borrowing limit.
+
+\subsection{Testing}
+
+The toollibrary-nci library includes 43 automated unit tests covering all four classes. The tests validate borrower limit enforcement at zero, one, two, and three active loans, late fee calculations for on-time returns (zero fee), one-day overdue, and extended overdue periods, all six permitted tool status transitions and rejection of invalid transitions such as loaned to under\_repair, category validation for all six accepted categories and rejection of unknown categories, and input validation including empty strings, excessively long descriptions, and special characters. The test suite executes as a mandatory CI/CD pipeline gate.
+
+% ============================================================
+% CI/CD AND DEPLOYMENT
+% ============================================================
+\section{Continuous Integration, Delivery and Deployment}
+
+The application source code is maintained in a GitHub repository at \url{https://github.com/vishvak55/CPP\_Project}. A CI/CD pipeline was implemented using GitHub Actions, triggered automatically on every push to the main branch. The pipeline consists of three sequential jobs.
+
+The first job, \texttt{test-library}, installs the toollibrary-nci library in editable mode and executes the full pytest suite of 43 unit tests. Only when all tests pass does the pipeline proceed to the deployment stages.
+
+The second job, \texttt{deploy-backend}, provisions the AWS infrastructure using the AWS CLI. This includes creating two DynamoDB tables (tools and loans) with on-demand billing and appropriate key schemas with a Global Secondary Index on the loans table for borrowerId lookups, creating S3 buckets for image storage and frontend hosting, creating an IAM execution role with policies scoped to the specific resources, creating an SNS topic for lending notifications, packaging and deploying the Lambda function with all dependencies, and configuring API Gateway with proxy integration and CORS support.
+
+The third job, \texttt{deploy-frontend}, retrieves the API Gateway URL, builds the React application with the API URL injected as an environment variable, and synchronises the compiled assets to the frontend S3 bucket. All infrastructure creation commands are idempotent, enabling safe repeated deployments. The pipeline requires only AWS\_ACCESS\_KEY\_ID and AWS\_SECRET\_ACCESS\_KEY as repository secrets.
+
+% ============================================================
+% CONCLUSIONS
+% ============================================================
+\section{Conclusions}
+
+This project successfully demonstrates the development and deployment of a serverless cloud-native application that integrates six AWS services to deliver a community tool lending library platform. ToolShare provides tool catalogue management across six categories, borrowing and returning with due date tracking, borrower limit enforcement, late fee calculation, overdue monitoring, and email notifications, all without requiring any server infrastructure management.
+
+Several key findings emerged during the development process. First, the borrower limit enforcement required careful coordination between the loan query and the borrow transaction to prevent race conditions where two concurrent requests could both pass the limit check before either creates a new loan record. DynamoDB conditional writes were employed to ensure atomicity, using a condition expression that verifies the tool's status has not changed since it was last read.
+
+Second, the tool status workflow with its defined state machine proved essential for maintaining inventory consistency. By restricting transitions to only the valid paths (ready to loaned, loaned to returned, returned to ready, ready to under\_repair, under\_repair to ready), the system prevents illogical states such as a tool being borrowed while it is under repair. The toollibrary-nci library enforces these transitions independently of the frontend, providing a robust guard against invalid API calls.
+
+Third, the late fee calculation required careful handling of date arithmetic, particularly around edge cases such as same-day returns and returns spanning daylight saving time transitions. The toollibrary-nci library's use of Python's datetime module with date-only comparisons (excluding time components) ensured consistent fee calculations regardless of the time of day when returns are processed.
+
+The main limitations include the absence of reservation capabilities for popular tools and the lack of integration with a payment system for late fee collection. Future enhancements could include a waiting list feature using DynamoDB Streams to notify users when desired tools become available, integration with a payment gateway for automated fee collection, and the addition of tool condition reporting with photograph evidence upon return. The serverless architecture provides a cost-effective foundation particularly well-suited to community organisations, as the pay-per-use model ensures operational costs remain minimal during periods of low activity.
+
+% ============================================================
+% REFERENCES
+% ============================================================
+\begin{thebibliography}{00}
+
+\bibitem{cloudpatterns} C. Richardson, ``Microservices Patterns: With Examples in Java,'' Manning Publications, 2018.
+
+\bibitem{serverless} P. Sbarski, ``Serverless Architectures on AWS: With Examples Using AWS Lambda,'' 2nd ed., Manning Publications, 2022.
+
+\bibitem{awslambda} Amazon Web Services, ``AWS Lambda Developer Guide,'' 2024. [Online]. Available: https://docs.aws.amazon.com/lambda/
+
+\bibitem{awsdynamodb} Amazon Web Services, ``Amazon DynamoDB Developer Guide,'' 2024. [Online]. Available: https://docs.aws.amazon.com/dynamodb/
+
+\bibitem{awsapigateway} Amazon Web Services, ``Amazon API Gateway Developer Guide,'' 2024. [Online]. Available: https://docs.aws.amazon.com/apigateway/
+
+\bibitem{awss3} Amazon Web Services, ``Amazon Simple Storage Service (S3) Documentation,'' 2024. [Online]. Available: https://docs.aws.amazon.com/s3/
+
+\bibitem{awssns} Amazon Web Services, ``Amazon Simple Notification Service Developer Guide,'' 2024. [Online]. Available: https://docs.aws.amazon.com/sns/
+
+\bibitem{awsiam} Amazon Web Services, ``AWS Identity and Access Management User Guide,'' 2024. [Online]. Available: https://docs.aws.amazon.com/iam/
+
+\bibitem{react} Meta Platforms, ``React Documentation,'' 2024. [Online]. Available: https://react.dev/
+
+\bibitem{vite} E. You, ``Vite: Next Generation Frontend Tooling,'' 2024. [Online]. Available: https://vitejs.dev/
+
+\end{thebibliography}
+
+\end{document}
