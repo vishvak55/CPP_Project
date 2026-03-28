@@ -27,14 +27,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install library
+      - name: Install library and run tests
         run: |
           cd library
           pip install -e .
-
-      - name: Run tests
-        run: |
-          cd library
+          pip install pytest
           python -m pytest tests/ -v --tb=short
 
   deploy-backend:
