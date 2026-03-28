@@ -105,7 +105,7 @@ jobs:
           else
             aws lambda create-function \
               --function-name $LAMBDA_FUNCTION \
-              --runtime python3.12 \
+              --runtime python3.11 \
               --handler lambda_function.lambda_handler \
               --role $ROLE_ARN \
               --zip-file fileb://function.zip \
@@ -116,28 +116,46 @@ jobs:
 
       - name: Setup API Gateway
         run: |
-          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text)
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text --region $AWS_REGION)
           if [ -z "$API_ID" ] || [ "$API_ID" = "None" ]; then
-            API_ID=$(aws apigateway create-rest-api --name "$API_NAME" --query 'id' --output text)
+            API_ID=$(aws apigateway create-rest-api --name "$API_NAME" --endpoint-configuration types=REGIONAL --query 'id' --output text --region $AWS_REGION)
           fi
           echo "API_ID=$API_ID" >> $GITHUB_ENV
-          ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text)
-          RESOURCE_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part "{proxy+}" --query 'id' --output text 2>/dev/null || \
-            aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/{proxy+}'].id" --output text)
-          for METHOD in ANY OPTIONS; do
-            aws apigateway put-method --rest-api-id $API_ID --resource-id $RESOURCE_ID --http-method $METHOD --authorization-type NONE 2>/dev/null || true
-          done
-          LAMBDA_ARN=$(aws lambda get-function --function-name $LAMBDA_FUNCTION --query 'Configuration.FunctionArn' --output text)
+
+          ROOT_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?path=='/'].id" --output text --region $AWS_REGION)
+
+          PROXY_ID=$(aws apigateway get-resources --rest-api-id $API_ID --query "items[?pathPart=='{proxy+}'].id" --output text --region $AWS_REGION)
+          if [ -z "$PROXY_ID" ] || [ "$PROXY_ID" = "None" ]; then
+            PROXY_ID=$(aws apigateway create-resource --rest-api-id $API_ID --parent-id $ROOT_ID --path-part '{proxy+}' --query 'id' --output text --region $AWS_REGION)
+          fi
+
+          LAMBDA_ARN=$(aws lambda get-function --function-name $LAMBDA_FUNCTION --query 'Configuration.FunctionArn' --output text --region $AWS_REGION)
           LAMBDA_URI="arn:aws:apigateway:${AWS_REGION}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations"
-          aws apigateway put-integration --rest-api-id $API_ID --resource-id $RESOURCE_ID --http-method ANY \
-            --type AWS_PROXY --integration-http-method POST --uri $LAMBDA_URI 2>/dev/null || true
-          aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod 2>/dev/null || true
+
+          # ANY on proxy
+          aws apigateway put-method --rest-api-id $API_ID --resource-id $PROXY_ID --http-method ANY --authorization-type NONE --request-parameters "method.request.path.proxy=true" --region $AWS_REGION 2>/dev/null || true
+          aws apigateway put-integration --rest-api-id $API_ID --resource-id $PROXY_ID --http-method ANY --type AWS_PROXY --integration-http-method POST --uri "$LAMBDA_URI" --region $AWS_REGION
+
+          # OPTIONS on proxy for CORS
+          aws apigateway put-method --rest-api-id $API_ID --resource-id $PROXY_ID --http-method OPTIONS --authorization-type NONE --region $AWS_REGION 2>/dev/null || true
+          aws apigateway put-method-response --rest-api-id $API_ID --resource-id $PROXY_ID --http-method OPTIONS --status-code 200 --response-parameters "method.response.header.Access-Control-Allow-Headers=true,method.response.header.Access-Control-Allow-Methods=true,method.response.header.Access-Control-Allow-Origin=true" --region $AWS_REGION 2>/dev/null || true
+          aws apigateway put-integration --rest-api-id $API_ID --resource-id $PROXY_ID --http-method OPTIONS --type MOCK --request-templates '{"application/json": "{\"statusCode\": 200}"}' --region $AWS_REGION
+          aws apigateway put-integration-response --rest-api-id $API_ID --resource-id $PROXY_ID --http-method OPTIONS --status-code 200 --response-parameters '{"method.response.header.Access-Control-Allow-Headers":"'"'"'Content-Type,Authorization,X-Amz-Date,X-Api-Key'"'"'","method.response.header.Access-Control-Allow-Methods":"'"'"'GET,POST,PUT,DELETE,OPTIONS'"'"'","method.response.header.Access-Control-Allow-Origin":"'"'"'*'"'"'"}' --region $AWS_REGION
+
+          # ANY on root
+          aws apigateway put-method --rest-api-id $API_ID --resource-id $ROOT_ID --http-method ANY --authorization-type NONE --region $AWS_REGION 2>/dev/null || true
+          aws apigateway put-integration --rest-api-id $API_ID --resource-id $ROOT_ID --http-method ANY --type AWS_PROXY --integration-http-method POST --uri "$LAMBDA_URI" --region $AWS_REGION
+
+          # Lambda permission
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           aws lambda add-permission --function-name $LAMBDA_FUNCTION \
-            --statement-id apigateway-access-$(date +%s) \
+            --statement-id apigateway-invoke-$(date +%s) \
             --action lambda:InvokeFunction \
             --principal apigateway.amazonaws.com \
-            --source-arn "arn:aws:execute-api:${AWS_REGION}:${ACCOUNT_ID}:${API_ID}/*" 2>/dev/null || true
+            --source-arn "arn:aws:execute-api:${AWS_REGION}:${ACCOUNT_ID}:${API_ID}/*" --region $AWS_REGION 2>/dev/null || true
+
+          # Deploy
+          aws apigateway create-deployment --rest-api-id $API_ID --stage-name prod --region $AWS_REGION
           echo "API URL: https://${API_ID}.execute-api.${AWS_REGION}.amazonaws.com/prod"
 
   deploy-frontend:
