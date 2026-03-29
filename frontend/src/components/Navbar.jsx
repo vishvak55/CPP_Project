@@ -36,7 +36,7 @@ export default function Navbar() {
             </div>
           </div>
           <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-500">{user?.email}</span>
+            <span className="text-sm text-gray-500">{user?.username || user?.name || user?.email}</span>
             <button
               onClick={handleLogout}
               className="flex items-center space-x-1 text-gray-500 hover:text-red-600 text-sm font-medium"

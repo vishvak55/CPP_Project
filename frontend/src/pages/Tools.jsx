@@ -118,7 +118,7 @@ export default function Tools() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {filtered.map((tool) => (
-            <Link key={tool.toolId} to={`/tools/${tool.toolId}`} className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow">
+            <Link key={tool.id} to={`/tools/${tool.id}`} className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow">
               {tool.imageUrl && (
                 <img src={tool.imageUrl} alt={tool.name} className="w-full h-40 object-cover rounded-lg mb-4" />
               )}
