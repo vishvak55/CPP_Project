@@ -17,7 +17,7 @@ export default function Register() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await registerUser({ name, email, password });
+      const res = await registerUser({ username: name, email, password });
       login(res.data.user, res.data.token);
       toast.success("Account created successfully!");
       navigate("/");
