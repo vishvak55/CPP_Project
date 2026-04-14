@@ -486,6 +486,9 @@ def handle_get_loans(event, user):
 
         loans = result.get("Items", [])
         loans.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        # Add loanId alias for frontend compatibility
+        for l in loans:
+            l["loanId"] = l["id"]
         return response(200, {"loans": loans})
     except Exception as e:
         return response(500, {"error": f"Failed to fetch loans: {str(e)}"})
@@ -528,13 +531,13 @@ def handle_dashboard(event, user):
         loaned = len([t for t in tools if t.get("status") == "loaned"])
         repair = len([t for t in tools if t.get("status") == "repair"])
 
-        # Scan active loans for overdue count
+        # Scan all loans
         loans_result = table.scan(
-            FilterExpression="entityType = :et AND #s = :active",
-            ExpressionAttributeValues={":et": "loan", ":active": "active"},
-            ExpressionAttributeNames={"#s": "status"},
+            FilterExpression="entityType = :et",
+            ExpressionAttributeValues={":et": "loan"},
         )
-        active_loans = loans_result.get("Items", [])
+        all_loans = loans_result.get("Items", [])
+        active_loans = [l for l in all_loans if l.get("status") == "active"]
 
         today = datetime.utcnow().strftime("%Y-%m-%d")
         overdue_count = len([
@@ -542,12 +545,29 @@ def handle_dashboard(event, user):
             if l.get("dueDate", "9999-12-31") < today
         ])
 
+        # Recent loans (last 10)
+        all_loans.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        recent = []
+        for l in all_loans[:10]:
+            recent.append({
+                "loanId": l["id"],
+                "toolId": l.get("toolId", ""),
+                "toolName": l.get("toolName", "Unknown"),
+                "userName": l.get("borrowerEmail", ""),
+                "borrowDate": l.get("borrowDate", ""),
+                "dueDate": l.get("dueDate", ""),
+                "status": l.get("status", ""),
+            })
+
         return response(200, {
             "totalTools": total_tools,
             "available": available,
+            "availableCount": available,
             "loaned": loaned,
+            "loanedCount": loaned,
             "repair": repair,
             "overdueCount": overdue_count,
+            "recentLoans": recent,
         })
     except Exception as e:
         return response(500, {"error": f"Failed to load dashboard: {str(e)}"})

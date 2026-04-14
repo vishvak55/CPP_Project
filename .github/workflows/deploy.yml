@@ -121,6 +121,13 @@ jobs:
               --environment "Variables={DYNAMODB_TABLE=$DYNAMODB_TABLE,S3_BUCKET=$S3_BUCKET,SNS_TOPIC_ARN=$SNS_TOPIC_ARN,REGION=$AWS_REGION,JWT_SECRET=toolshare-secret-2026}"
           fi
 
+      - name: Seed demo data
+        run: |
+          pip install boto3
+          export DYNAMODB_TABLE=$DYNAMODB_TABLE
+          export REGION=$AWS_REGION
+          python backend/seed.py
+
       - name: Setup API Gateway
         run: |
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='$API_NAME'].id" --output text --region $AWS_REGION)

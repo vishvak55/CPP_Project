@@ -69,7 +69,20 @@ export default function Login() {
               {loading ? "Signing in..." : "Sign In"}
             </button>
           </form>
-          <p className="mt-6 text-center text-sm text-gray-500">
+          <div className="mt-6 pt-5 border-t border-gray-200">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider text-center mb-3">Demo Accounts</p>
+            <div className="flex gap-2 justify-center">
+              <button type="button" onClick={() => { setEmail("admin@toolshare.com"); setPassword("Admin123!"); }}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 transition-colors border border-blue-200">
+                Admin
+              </button>
+              <button type="button" onClick={() => { setEmail("user@toolshare.com"); setPassword("User1234!"); }}
+                className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-full hover:bg-green-100 transition-colors border border-green-200">
+                Demo User
+              </button>
+            </div>
+          </div>
+          <p className="mt-4 text-center text-sm text-gray-500">
             Don't have an account?{" "}
             <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
               Sign up
